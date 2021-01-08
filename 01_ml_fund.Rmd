@@ -1,7 +1,7 @@
 ---
 title: "01 Machine Learning Fundamentals"
 author: "Ahmed Elkhateeb"
-date: "2020-12-08"
+date: "2020-01-08"
 output:
   html_document:
     toc: true
@@ -10,46 +10,130 @@ output:
     collapsed: false
     number_sections: true
     toc_depth: 3
-    #code_folding: hide
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
 ```
 
-**IMPORTANT:** You can delete everything in here and start fresh. You might want to start by not deleting anything above this line until you know what that stuff is doing.
-
-This is an `.Rmd` file. It is plain text with special features. Any time you write just like this, it will be compiled to normal text in the website. If you put a \# in front of your text, it will create a top level-header.
-
-# My first post
-
-Last compiled: `r Sys.Date()`
-
-Notice that whatever you define as a top level header, automatically gets put into the table of contents bar on the left. 
-
-## Second level header
-
-You can add more headers by adding more hashtags. These won't be put into the table of contents
-
-### third level header
-
-Here's an even lower level header
-
-# My second post (note the order)
-
-Last compiled: `r Sys.Date()`
-
-I'm writing this tutorial going from the top down. And, this is how it will be printed. So, notice the second post is second in the list. If you want your most recent post to be at the top, then make a new post starting at the top. If you want the oldest first, do, then keep adding to the bottom
-
-# Adding R stuff
-
-So far this is just a blog where you can write in plain text and serve your writing to a webpage. One of the main purposes of this lab journal is to record your progress learning R. The reason I am asking you to use this process is because you can both make a website, and a lab journal, and learn R all in R-studio. This makes everything really convenient and in the same place. 
-
-So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
 
 ```{r}
-samples <- rnorm(100, mean=0, sd=1)
-hist(samples)
-```
+library(tidyverse)
+library(tidyquant)
+library(broom)
+library(umap)
+library(ggrepel)
 
-When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
+# STOCK PRICES
+sp_500_prices_tbl <- read_rds("Machine Learning Fundamentals data/sp_500_prices_tbl.rds")
+
+# SECTOR INFORMATION
+sp_500_index_tbl <- read_rds("raw_data/sp_500_index_tbl.rds")
+
+# Apply your data transformation skills!
+sp_500_daily_returns_tbl<- sp_500_prices_tbl%>%
+  select(symbol,date,adjusted)%>%
+  filter(lubridate::year(date)>=2018)%>%
+  group_by(symbol)%>%
+  mutate(lag=lag(adjusted,1))%>%
+  drop_na(lag)%>%
+  mutate(diff=adjusted-lag)%>%
+  mutate(pct_return=diff/lag)%>%
+  select(symbol,date,pct_return)
+# Output: sp_500_daily_returns_tbl
+
+sp_500_daily_returns_tbl <- read_rds("raw_data/sp_500_daily_returns_tbl.rds")
+
+# Convert to User-Item Format
+stock_date_matrix_tbl <- sp_500_daily_returns_tbl%>%
+                         pivot_wider(names_from = date , values_from = pct_return, values_fill=0)
+# Output: stock_date_matrix_tbl
+
+stock_date_matrix_tbl <- read_rds("raw_data/stock_date_matrix_tbl.rds")
+
+# Create kmeans_obj for 4 centers
+kmeans_obj<-stock_date_matrix_tbl%>%
+  select(-symbol)%>%
+  kmeans(centers = 4,nstart = 20)
+
+# Apply glance() to get the tot.withinss
+broom::glance(kmeans_obj)
+
+kmeans_mapper <- function(center = 3) {
+  stock_date_matrix_tbl %>%
+    select(-symbol) %>%
+    kmeans(centers = center, nstart = 20)
+}
+
+# Use purrr to map
+k_means_mapped_tbl<-tibble(centers=1:30)%>%
+  mutate(k_means = map(centers, kmeans_mapper))%>%
+  mutate(glance  = map(k_means,glance))
+# Output: k_means_mapped_tbl 
+
+
+# Visualize Scree Plot
+
+k_means_mapped_tbl %>%
+  unnest(glance) %>%
+  select(centers, tot.withinss) %>%
+  # Visualization
+  ggplot(aes(centers, tot.withinss)) +
+  geom_point(color = "#2DC6D6", size = 4) +
+  geom_line(color = "#2DC6D6", size = 1) +
+  # Add labels
+  ggrepel::geom_label_repel(aes(label = centers), color = "#2DC6D6") +
+  # Formatting
+  labs(title = "Scree Plot")
+
+
+k_means_mapped_tbl <- read_rds("raw_data/k_means_mapped_tbl.rds")
+
+# Apply UMAP
+# Store results as: umap_results 
+umap_results<-stock_date_matrix_tbl%>%
+  select(-symbol)%>%
+  umap()
+
+
+# Convert umap results to tibble with symbols
+umap_results_tbl <- umap_results$layout %>%
+  as_tibble() %>%
+  set_names(c("x", "y")) %>%
+  bind_cols(
+    stock_date_matrix_tbl %>% select(symbol)
+  )
+# Output: umap_results_tbl
+
+# Visualize UMAP results
+umap_results_tbl %>%
+  ggplot(aes(x, y)) +
+  geom_point(alpha=0.5) + 
+  theme_tq()+
+  labs(title = "UMAP Projection")
+
+k_means_mapped_tbl <- read_rds("raw_data/k_means_mapped_tbl.rds")
+umap_results_tbl   <- read_rds("raw_data/umap_results_tbl.rds")
+
+# Get the k_means_obj from the 10th center
+k_means_obj <- k_means_mapped_tbl %>%
+  pull(k_means) %>%
+  pluck(10)
+# Store as k_means_obj
+
+# Use your dplyr & broom skills to combine the k_means_obj with the umap_results_tbl
+umap_kmeans_results_tbl<-k_means_obj%>%
+  augment(stock_date_matrix_tbl) %>%
+  select(symbol, .cluster) %>%
+  left_join(umap_results_tbl, by= "symbol")%>%
+  left_join(sp_500_index_tbl %>% select(symbol, company, sector), by="symbol")
+# Output: umap_kmeans_results_tbl
+
+
+# Visualize the combined K-Means and UMAP results
+umap_kmeans_results_tbl%>%
+  ggplot(aes(V1, V2, color = .cluster)) +
+  geom_point(alpha=0.5) +
+  scale_color_manual(values=c("#2d72d6", "#2dc6d6", "#2dd692", "#d62dc5", "#d62d30","#ced62d", "#60d62d", "#571341", "#d62dc5", "#6e5552"))    
+```

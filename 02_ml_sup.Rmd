@@ -1,6 +1,6 @@
 ---
 title: "02 Supervised ML"
-date: "2020-11-05"
+date: "2020-01-08"
 output:
   html_document:
     toc: true
@@ -16,39 +16,62 @@ output:
 knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
 ```
 
-**IMPORTANT:** You can delete everything in here and start fresh. You might want to start by not deleting anything above this line until you know what that stuff is doing.
-
-This is an `.Rmd` file. It is plain text with special features. Any time you write just like this, it will be compiled to normal text in the website. If you put a \# in front of your text, it will create a top level-header.
-
-# My first post
-
-Last compiled: `r Sys.Date()`
-
-Notice that whatever you define as a top level header, automatically gets put into the table of contents bar on the left. 
-
-## Second level header
-
-You can add more headers by adding more hashtags. These won't be put into the table of contents
-
-### third level header
-
-Here's an even lower level header
-
-# My second post (note the order)
-
-Last compiled: `r Sys.Date()`
-
-I'm writing this tutorial going from the top down. And, this is how it will be printed. So, notice the second post is second in the list. If you want your most recent post to be at the top, then make a new post starting at the top. If you want the oldest first, do, then keep adding to the bottom
-
-# Adding R stuff
-
-So far this is just a blog where you can write in plain text and serve your writing to a webpage. One of the main purposes of this lab journal is to record your progress learning R. The reason I am asking you to use this process is because you can both make a website, and a lab journal, and learn R all in R-studio. This makes everything really convenient and in the same place. 
-
-So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
-
 ```{r}
-samples <- rnorm(100, mean=0, sd=1)
-hist(samples)
-```
+library(tidyverse)
+library(parsnip)
+library(recipes)
+library(rsample)
+library(yardstick)
+library(rpart.plot)
+library(workflows)
+library(tidymodels)
+library(broom.mixed)
+library(modeldata)
 
-When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
+#I. Build a model
+#Gathering Data----
+bike_features_tbl <- readRDS("Machine Learning Fundamentals data/bike_features_tbl.rds")
+bike_features_tbl <- bike_features_tbl %>% 
+  select(model:gender, `Rear Derailleur`, `Shift Lever`)
+
+set.seed(seed = 1113)
+split_obj <- rsample::initial_split(bike_features_tbl, prop   = 0.80, 
+                                    strata = "category_2")
+# Assign training and test data
+train_tbl <- training(split_obj) 
+test_tbl  <- testing(split_obj)
+train_tbl <- train_tbl %>% set_names(str_replace_all(names(train_tbl), " |-", "_"))
+test_tbl  <- test_tbl  %>% set_names(str_replace_all(names(test_tbl),  " |-", "_"))
+
+#II. Create features with the recipes package
+recipe_obj <- recipe(price ~ category_2 + frame_material + Rear_Derailleur + Shift_Lever, data = train_tbl) %>% 
+  step_dummy(Rear_Derailleur , Shift_Lever, one_hot = TRUE) %>%
+  step_nzv(all_predictors()) %>%
+  prep()
+
+
+#III. Bundle the model and recipe with the workflow package
+model_linear_lm <- linear_reg(mode = "regression") %>%
+  set_engine("lm")
+  
+  bikes_wflow <- 
+  workflow() %>% 
+  add_model(model_linear_lm) %>% 
+  add_recipe(recipe_obj)
+
+#IV. Evaluate your model with the yardstick package
+#Just use the function, that we have created in this session.
+
+calc_metrics <- function(model, new_data = test_tbl) {
+  model %>%
+    predict(new_data = new_data) %>%
+    bind_cols(new_data %>% select(price)) %>%
+    yardstick::metrics(truth = price, estimate = .pred)
+}
+
+bikes_fit <- 
+  bikes_wflow %>% 
+  fit(data = train_tbl)
+
+bikes_fit %>% calc_metrics(test_tbl)
+```

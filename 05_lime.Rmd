@@ -1,6 +1,6 @@
 ---
 title: "05 LIME"
-date: "2020-11-05"
+date: "2021-01-08"
 output:
   html_document:
     toc: true
@@ -16,39 +16,141 @@ output:
 knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
 ```
 
-**IMPORTANT:** You can delete everything in here and start fresh. You might want to start by not deleting anything above this line until you know what that stuff is doing.
-
-This is an `.Rmd` file. It is plain text with special features. Any time you write just like this, it will be compiled to normal text in the website. If you put a \# in front of your text, it will create a top level-header.
-
-# My first post
-
-Last compiled: `r Sys.Date()`
-
-Notice that whatever you define as a top level header, automatically gets put into the table of contents bar on the left. 
-
-## Second level header
-
-You can add more headers by adding more hashtags. These won't be put into the table of contents
-
-### third level header
-
-Here's an even lower level header
-
-# My second post (note the order)
-
-Last compiled: `r Sys.Date()`
-
-I'm writing this tutorial going from the top down. And, this is how it will be printed. So, notice the second post is second in the list. If you want your most recent post to be at the top, then make a new post starting at the top. If you want the oldest first, do, then keep adding to the bottom
-
-# Adding R stuff
-
-So far this is just a blog where you can write in plain text and serve your writing to a webpage. One of the main purposes of this lab journal is to record your progress learning R. The reason I am asking you to use this process is because you can both make a website, and a lab journal, and learn R all in R-studio. This makes everything really convenient and in the same place. 
-
-So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
 
 ```{r}
-samples <- rnorm(100, mean=0, sd=1)
-hist(samples)
-```
+# Load Libraries 
+library(h2o)
+library(rsample)
+library(recipes)
+library(readxl)
+library(tidyverse)
+library(tidyquant)
+library(lime)
 
-When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
+# Load Data
+employee_attrition_tbl <- read_csv("raw_data/datasets-1067-1925-WA_Fn-UseC_-HR-Employee-Attrition.txt")
+definitions_raw_tbl    <- read_excel("Machine Learning Fundamentals data/data_definitions.xlsx", sheet = 1, col_names = FALSE)
+
+# Processing Pipeline
+source("Codes/Processing_PipeLine.R")
+employee_attrition_readable_tbl <- process_hr_data_readable(employee_attrition_tbl, definitions_raw_tbl)
+
+# Test and Train
+set.seed(seed = 1113)
+split_obj <- rsample::initial_split(employee_attrition_readable_tbl, prop = 0.85)
+
+# Assign training and test data
+train_readable_tbl <- training(split_obj)
+test_readable_tbl  <- testing(split_obj)
+
+# ML Preprocessing Recipe 
+recipe_obj <- recipe(Attrition ~ ., data = train_readable_tbl) %>%
+  step_zv(all_predictors()) %>%
+  step_mutate_at(c("JobLevel", "StockOptionLevel"), fn = as.factor) %>% 
+  prep()
+
+recipe_obj
+
+train_tbl <- bake(recipe_obj, new_data = train_readable_tbl)
+test_tbl  <- bake(recipe_obj, new_data = test_readable_tbl)
+
+#  Model
+h2o.init()
+
+automl_leader <- h2o.loadModel("03_ml_aut_files/h20_models/StackedEnsemble_AllModels_AutoML_20210107_013343")
+automl_leader
+
+explainer <- train_tbl %>%
+  select(-Attrition) %>%
+  lime(
+    model           = automl_leader,
+    bin_continuous  = TRUE,
+    n_bins          = 4,
+    quantile_bins   = TRUE
+  )
+
+explanation <- test_tbl %>%
+  select(-Attrition) %>%
+  lime::explain(
+    
+    # Pass our explainer object
+    explainer = explainer,
+    # Because it is a binary classification model: 1
+    n_labels   = 1,
+    # number of features to be returned
+    n_features = 8,
+    # number of localized linear models
+    n_permutations = 5000,
+    # Let's start with 1
+    kernel_width   = 1
+  )
+
+case_1 <- explanation %>%
+  filter(case == 1)
+
+# Plot Function 
+plot_features_recreated <- function(explanation, ncol = 2, cases = NULL) {
+  
+  type_pal <- c('Supports', 'Contradicts')
+  explanation$type <- factor(ifelse(sign(explanation$feature_weight) == 1, type_pal[1], type_pal[2]), levels = type_pal)
+  description <- paste0(explanation$case, '_', explanation[['label']])
+  desc_width <- max(nchar(description)) + 1
+  description <- paste0(format(description, width = desc_width), explanation$feature_desc)
+  explanation$description <- factor(description, levels = description[order(abs(explanation$feature_weight))])
+  explanation$case <- factor(explanation$case, unique(explanation$case))
+  explanation$`Explanation fit` <- format(explanation$model_r2, digits = 2)
+  
+    explanation$probability <- format(explanation$label_prob, digits = 2)
+    explanation$label <- factor(explanation$label, unique(explanation$label[order(explanation$label_prob, decreasing = TRUE)]))
+    ggplot(explanation) +
+    facet_wrap(~ case + label + probability + `Explanation fit`, labeller  = label_both_upper, scales = 'free_y', ncol = ncol)+
+    geom_col(aes_(~description, ~feature_weight, fill = ~type)) +
+    coord_flip() +
+    scale_fill_manual(values = c('steelblue', 'firebrick'), drop = FALSE) +
+    scale_x_discrete(labels = function(lab) substr(lab, desc_width + 1, nchar(lab))) +
+    labs(y = 'Weight', x = 'Feature', fill = '') 
+}
+
+label_both_upper <- function(labels, multi_line = TRUE, sep = ': ') {
+  label_both(labels, multi_line, sep)
+}
+
+plot_features_recreated(explanation = case_1, ncol = 1)
+
+
+# Multiple Explanations
+explanation <- test_tbl %>%
+  slice(1:20) %>%
+  select(-Attrition) %>%
+  lime::explain(
+    explainer = explainer,
+    n_labels   = 1,
+    n_features = 8,
+    n_permutations = 5000,
+    kernel_width   = 0.5
+  )
+
+explanation %>%
+  as.tibble()
+
+# Explination Function
+plot_explanations <- function(explanation, ...) {
+  explanation$feature_desc <- factor(
+    explanation$feature_desc,
+    levels = rev(unique(explanation$feature_desc[order(explanation$feature, explanation$feature_value)]))
+  )
+  p <- ggplot(explanation, aes_(~case, ~feature_desc)) +
+    geom_tile(aes_(fill = ~feature_weight)) +
+    scale_x_discrete('Case', expand = c(0, 0)) +
+    scale_y_discrete('Feature', expand = c(0, 0)) +
+    scale_fill_gradient2('Feature\nweight', low = 'firebrick', mid = '#f7f7f7', high = 'steelblue')
+
+  if (is.null(explanation$label)) {
+    p
+  } else {
+    p + facet_wrap(~label, ...)
+  }
+}
+
+plot_explanations(explanation)
+```

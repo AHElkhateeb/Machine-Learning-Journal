@@ -1,6 +1,6 @@
 ---
 title: "03 Automated Machine Learning with H20"
-date: "2020-11-05"
+date: "2020-01-08"
 output:
   html_document:
     toc: true
@@ -15,40 +15,202 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(message=FALSE,warning=FALSE, cache=TRUE)
 ```
-
-**IMPORTANT:** You can delete everything in here and start fresh. You might want to start by not deleting anything above this line until you know what that stuff is doing.
-
-This is an `.Rmd` file. It is plain text with special features. Any time you write just like this, it will be compiled to normal text in the website. If you put a \# in front of your text, it will create a top level-header.
-
-# My first post
-
-Last compiled: `r Sys.Date()`
-
-Notice that whatever you define as a top level header, automatically gets put into the table of contents bar on the left. 
-
-## Second level header
-
-You can add more headers by adding more hashtags. These won't be put into the table of contents
-
-### third level header
-
-Here's an even lower level header
-
-# My second post (note the order)
-
-Last compiled: `r Sys.Date()`
-
-I'm writing this tutorial going from the top down. And, this is how it will be printed. So, notice the second post is second in the list. If you want your most recent post to be at the top, then make a new post starting at the top. If you want the oldest first, do, then keep adding to the bottom
-
-# Adding R stuff
-
-So far this is just a blog where you can write in plain text and serve your writing to a webpage. One of the main purposes of this lab journal is to record your progress learning R. The reason I am asking you to use this process is because you can both make a website, and a lab journal, and learn R all in R-studio. This makes everything really convenient and in the same place. 
-
-So, let's say you are learning how to make a histogram in R. For example, maybe you want to sample 100 numbers from a normal distribution with mean = 0, and standard deviation = 1, and then you want to plot a histogram. You can do this right here by using an r code block, like this:
-
+Automated Machine Learning with H20 (I) Challenge
 ```{r}
-samples <- rnorm(100, mean=0, sd=1)
-hist(samples)
+#Load Libraries 
+library(tidyverse)
+library(readxl)
+library(skimr)
+library(GGally)
+
+# Load data
+employee_attrition_tbl <- read_csv("raw_data/datasets-1067-1925-WA_Fn-UseC_-HR-Employee-Attrition.txt")
+
+#Plot function
+plot_ggpairs <- function(data, color = NULL, density_alpha = 0.5) {
+  
+  color_expr <- enquo(color)
+  
+  if (rlang::quo_is_null(color_expr)) {
+    
+    g <- data %>%
+      ggpairs(lower = "blank") 
+    
+  } else {
+    
+    color_name <- quo_name(color_expr)
+    
+    g <- data %>%
+      ggpairs(mapping = aes_string(color = color_name), 
+              lower = "blank", legend = 1,
+              diag = list(continuous = wrap("densityDiag", 
+                                            alpha = density_alpha))) +
+      theme(legend.position = "bottom")
+  }
+  
+  return(g)
+  
+}
+```
+Solutions
+
+#1 C. Those that are leaving have a lower Monthly Income
+```{r}
+employee_attrition_tbl %>%
+     select(Attrition, contains("income")) %>%
+     plot_ggpairs(Attrition)
 ```
 
-When you knit this R Markdown document, you will see that the histogram is printed to the page, along with the R code. This document can be set up to hide the R code in the webpage, just delete the comment (hashtag) from the cold folding option in the yaml header up top. For purposes of letting yourself see the code, and me see the code, best to keep it the way that it is. You'll learn that all of these things and more can be customized in each R code block.
+#2 D. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("salary")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#3 C. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("stock")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#4 C. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("environmentsatisfaction")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#5 B. Those that are staying have a higher density of 2's and 3's
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("balance")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#6 D. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("Involvement")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#7 B. The proportion of those staying that are working Over Time are high compared to those that are not staying
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("overtime")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#8 C. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("trainingtimes")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#9 B. People that leave tend to have less working years at the company
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("yearsat")) %>%
+  plot_ggpairs(Attrition)
+```
+
+#10 C. It's difficult to deduce anything based on the visualization
+```{r}
+employee_attrition_tbl %>%
+  select(Attrition, contains("promotion")) %>%
+  plot_ggpairs(Attrition)
+```
+
+Automated Machine Learning with H20 (II) Challenge
+```{r}
+#Load Libraries
+library(tidyverse)
+library(readxl)
+library(h2o)
+library(rsample)
+library(recipes)
+
+
+#1 Load the training & test dataset
+product_backorders_tbl <- read_csv("raw_data/product_backorders.txt")
+
+set.seed(seed = 1113)
+split_obj                       <- rsample::initial_split(product_backorders_tbl, prop = 0.85)
+train_readable_tbl              <- training(split_obj)
+test_readable_tbl               <- testing(split_obj)
+
+
+#2 Specify the response and predictor variables
+recipe_obj <- recipe(went_on_backorder ~., data = train_readable_tbl) %>% 
+  step_zv(all_predictors()) %>% 
+  prep()
+
+train_tbl <- bake(recipe_obj, new_data = train_readable_tbl)
+test_tbl  <- bake(recipe_obj, new_data = test_readable_tbl)
+
+# Modeling
+h2o.init()
+
+# Split data into a training and a validation data frame
+split_h2o <- h2o.splitFrame(as.h2o(train_tbl), ratios = c(0.85), seed = 1234)
+train_h2o <- split_h2o[[1]]
+valid_h2o <- split_h2o[[2]]
+test_h2o  <- as.h2o(test_tbl)
+
+# Set the target and predictors
+y <- "went_on_backorder"
+x <- setdiff(names(train_h2o), y)
+
+
+#3 run AutoML specifying the stopping criterion
+automl_models_h2o <- h2o.automl(
+  x = x,
+  y = y,
+  training_frame    = train_h2o,
+  validation_frame  = valid_h2o,
+  leaderboard_frame = test_h2o,
+  max_runtime_secs  = 30,
+  nfolds            = 5 
+)
+
+
+#4 View the leaderboard
+automl_models_h2o@leaderboard
+
+
+#5 Predicting using Leader Model
+
+# Function that extracts H2O model name by position
+extract_h2o_model_name_by_position <- function(h2o_leaderboard, n = 1, verbose = T) {
+  
+  model_name <- h2o_leaderboard %>%
+    as.tibble() %>%
+    slice(n) %>%
+    pull(model_id)
+  
+  if (verbose) message(model_name)
+  
+  return(model_name)
+  
+}
+
+stacked_ensemble_h2o <- automl_models_h2o@leaderboard %>% 
+                        extract_h2o_model_name_by_position(1) %>% 
+                        h2o.getModel()
+
+predictions <- h2o.predict(stacked_ensemble_h2o, newdata = as.h2o(test_tbl))
+
+predictions_tbl <- predictions %>% as_tibble()
+
+predictions_tbl
+
+
+#6 Save the leader model
+stacked_ensemble_h2o %>% h2o.saveModel(path = "03_ml_aut_files/h20_models")
+# Save whole h2o model
+write_rds(automl_models_h2o,"automl_models_h2o.rds")
+
+```
